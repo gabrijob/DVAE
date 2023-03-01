@@ -33,6 +33,10 @@ def loss_MPJPE(x, y, nfeats=3):
     ret = (x-y).norm(dim=-1).mean(dim=-1).sum()
     return ret
 
+def loss_MSE(x, y):
+    ret = torch.mean((x-y)**2)
+    return ret
+
 # def loss_ISD(x, y):
 #     seq_len, bs, _ = x.shape
 #     ret = torch.sum( x/y - torch.log(x/y) - 1)
