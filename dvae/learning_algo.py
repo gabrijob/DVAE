@@ -204,7 +204,8 @@ class LearningAlgorithm():
 
             # KL warm-up
             if epoch % 10 == 0 and kl_warm < 1:
-                kl_warm = (epoch // 10) * 0.2 
+                #kl_warm = (epoch // 10) * 0.2 
+                kl_warm = 1
                 logger.info('KL warm-up, anneal coeff: {}'.format(kl_warm))
 
 
@@ -225,7 +226,7 @@ class LearningAlgorithm():
                 elif self.dataset_name == 'METRIC':
                     # (batch_size, seq_len, x_dim) -> (seq_len, batch_size, x_dim)
                     batch_data = batch_data.permute(1, 0, 2)
-                    recon_batch_data = self.model(batch_data) # TODO: solve vanishing/exploding gradients problem by normalization possibly
+                    recon_batch_data = self.model(batch_data)
                     loss_fn = torch.nn.MSELoss(reduction='sum')
                     loss_recon = loss_fn(batch_data, recon_batch_data)
 

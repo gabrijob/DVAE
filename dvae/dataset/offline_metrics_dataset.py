@@ -91,7 +91,10 @@ class OfflinePrometheusMetrics(Dataset):
         metric_pool = dict(sorted(metric_pool.items()))
 
         # Compute sequence grouping
-        self.compute_seqs(split=split, t_per_metric=t_per_metric)
+        if (self.shuffle):
+            self.compute_seqs_shuffle(split=split, t_per_metric=t_per_metric)
+        else:
+            self.compute_seqs(split=split, t_per_metric=t_per_metric)
 
         # Normalize metric values
         np_metrics = np.empty((len(metric_pool.items()), t_per_metric[0]), dtype=np.float32)
@@ -105,7 +108,7 @@ class OfflinePrometheusMetrics(Dataset):
         return scaled_metrics
 
 
-    def compute_seqs(self, split, t_per_metric, train_p=0.7, test_p=0., val_p=0.3):
+    def compute_seqs(self, split, t_per_metric, train_p=0.6, test_p=0.2, val_p=0.2):
         # Map observations into sequences of samples
         self.valid_seq_list = []
         n_seq = t_per_metric[0] // self.seq_len
@@ -118,7 +121,6 @@ class OfflinePrometheusMetrics(Dataset):
             n_seq = math.floor(n_seq*test_p)   
         else:
             offset = math.floor(n_seq*(train_p+test_p))
-            #n_seq -= offset
             n_seq = math.floor(n_seq*val_p)  
 
         for i in range(offset, n_seq+offset):
@@ -126,8 +128,32 @@ class OfflinePrometheusMetrics(Dataset):
             end = start + self.seq_len - 1
             self.valid_seq_list.append((start, end))
 
-        if self.shuffle:
-            random.shuffle(self.valid_seq_list)
+
+    def compute_seqs_shuffle(self, split, t_per_metric, train_p=0.6, test_p=0.2, val_p=0.2):
+        # Map observations into sequences of samples
+        self.valid_seq_list = []
+        valid_seq_list_aux = []
+        n_seq = t_per_metric[0] // self.seq_len
+
+        for i in range(n_seq):
+            start = i * self.seq_len
+            end = start + self.seq_len - 1
+            valid_seq_list_aux.append((start, end))
+
+        # Use 3 as a random seed to keep consistency
+        random.Random(3).shuffle(valid_seq_list_aux)
+
+        offset = 0
+        if split==0:
+            n_seq = math.floor(n_seq*train_p)
+        elif split==1:
+            offset = math.floor(n_seq*train_p)
+            n_seq = math.floor(n_seq*test_p)   
+        else:
+            offset = math.floor(n_seq*(train_p+test_p))
+            n_seq = math.floor(n_seq*val_p)  
+
+        self.valid_seq_list = valid_seq_list_aux[offset:n_seq+offset]
 
 
     def __len__(self):
