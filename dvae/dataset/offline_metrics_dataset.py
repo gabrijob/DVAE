@@ -12,6 +12,10 @@ import random
 import math
 from sklearn import preprocessing
 
+# Use 3 as a random seed to keep consistency across experiments
+SEED = 3
+
+
 # Get JSON (or other) files with the results of metrics queries from several days/workload sessions
 # Online training will come from http requesting at runtime (later)
 def build_dataloader(cfg):
@@ -22,12 +26,13 @@ def build_dataloader(cfg):
     batch_size = cfg.getint('DataFrame', 'batch_size')
     num_workers = cfg.getint('DataFrame', 'num_workers')
     sequence_len = cfg.getint('DataFrame', 'sequence_len')
+    is_functions = cfg.getboolean('DataFrame', 'functions')
 
     # Training dataset
     split = 0 # train
-    train_dataset = OfflinePrometheusMetrics(svc_datadir=data_dir, seq_len=sequence_len, shuffle=shuffle, split=split)
+    train_dataset = OfflinePrometheusMetrics(svc_datadir=data_dir, seq_len=sequence_len, shuffle=shuffle, split=split, is_functions=is_functions)
     split = 2 # validation
-    val_dataset = OfflinePrometheusMetrics(svc_datadir=data_dir, seq_len=sequence_len, shuffle=shuffle, split=split)
+    val_dataset = OfflinePrometheusMetrics(svc_datadir=data_dir, seq_len=sequence_len, shuffle=shuffle, split=split, is_functions=is_functions)
     train_num = train_dataset.__len__()
     val_num = val_dataset.__len__()
     
@@ -42,29 +47,57 @@ def build_dataloader(cfg):
     
 
 class OfflinePrometheusMetrics(Dataset):
-    def __init__(self, svc_datadir, seq_len, shuffle, split=0):
+    def __init__(self, svc_datadir, seq_len, shuffle, split=0, is_functions=False):
         self.seq_len = seq_len
         self.shuffle = shuffle
+        self.split = split
 
-        # {'metric_1':[...], 'metric_2':[...], ..., 'metric_n':[...]}
-        metric_pool = {}
+        functions = ["abssin", "abscos", "sin", "cos", "bell", "linear", "log"]
         
-        dirs = os.listdir(svc_datadir)
+        if (is_functions):
+            # Random.sample should not generate any duplicate indexes
+            #removed_idx = random.Random(SEED).sample(range(0, len(functions)-1), 2)
+            removed_idx = [6,0]
+
+            # Data distribution proportions for ['training', 'test', 'validation']
+            data_dist = [0, 0, 0]
+            data_dist[split] = 1
+
+            # If 'training', use the non-removed functions
+            if split==0:
+                del functions[removed_idx[0]]
+                del functions[removed_idx[1]]
+            # If 'test' or 'evaluation', use only one of the removed functions
+            else:
+                functions = [functions.pop(removed_idx[split-1])]
+
+            print(functions)
+        else:
+            # Data distribution proportions for ['training', 'test', 'validation']
+            data_dist = [0.6, 0.2, 0.2]
+
+        self.read_data(svc_datadir, functions, data_dist[0], data_dist[1], data_dist[2])
+
+
+    def read_data(self, svc_datadir, functions, train_p=0, test_p=0, val_p=0):
+        
+        # Start reading files
+        metric_pool = {} # {'metric_1':[...], 'metric_2':[...], ..., 'metric_n':[...]}
         files = []
-        for dir in dirs:
-            f_in_dir = os.listdir(svc_datadir+'/'+dir)
-            files.extend([dir+'/'+f for f in f_in_dir if os.path.isfile(svc_datadir+'/'+dir+'/'+f)])
-        
+        for func_dir in functions:
+            exp_dirs = os.listdir(svc_datadir+'/'+func_dir)
+            for exp_dir in exp_dirs:
+                f_in_dir = os.listdir(svc_datadir+'/'+func_dir+'/'+exp_dir)
+                files.extend([func_dir+'/'+exp_dir+'/'+f for f in f_in_dir if os.path.isfile(svc_datadir+'/'+func_dir+'/'+exp_dir+'/'+f)])
+
         # For metric in metric_names:
         for fname in files:
-            
             # Read result metrics from datadir/metric.json 
             f = open(svc_datadir+'/'+fname)
             data = json.load(f)
             results = data['data']['result']
             
             # Insert time-series into metric_pool
-            #metric = results[0]['metric']['__name__']
             metric = os.path.basename(fname).split('.')[0]
             truncate_at = (len(results[0]['values']) // self.seq_len) * self.seq_len
             if metric in metric_pool:
@@ -76,25 +109,26 @@ class OfflinePrometheusMetrics(Dataset):
             else:
                 metric_pool[metric] = results[0]['values'][:truncate_at]
 
+
         # Assert that every metric has the same number of samples
         t_per_metric = [len(metric_pool[metric]) for metric in metric_pool.keys()]
         if sum(t_per_metric) != (len(t_per_metric) * t_per_metric[0]):
             raise Exception("Metric data does not have the same size across all metrics.")
         
         # Preprocess metric matrix
-        self.metric_matrix = self.preprocess_data(metric_pool, split, t_per_metric)
+        self.metric_matrix = self.preprocess_data(metric_pool, t_per_metric, train_p, test_p, val_p)
 
-        
-    
-    def preprocess_data(self, metric_pool, split, t_per_metric):
+
+    def preprocess_data(self, metric_pool, t_per_metric, train_p=0, test_p=0, val_p=0):
         # Order metric pool by metric name
         metric_pool = dict(sorted(metric_pool.items()))
+        self.metric_names = metric_pool.keys()
 
         # Compute sequence grouping
         if (self.shuffle):
-            self.compute_seqs_shuffle(split=split, t_per_metric=t_per_metric)
+            self.compute_seqs_shuffle(t_per_metric=t_per_metric, train_p=train_p, test_p=test_p, val_p=val_p)
         else:
-            self.compute_seqs(split=split, t_per_metric=t_per_metric)
+            self.compute_seqs_ordered(t_per_metric=t_per_metric, train_p=train_p, test_p=test_p, val_p=val_p)
 
         # Normalize metric values
         np_metrics = np.empty((len(metric_pool.items()), t_per_metric[0]), dtype=np.float32)
@@ -108,15 +142,15 @@ class OfflinePrometheusMetrics(Dataset):
         return scaled_metrics
 
 
-    def compute_seqs(self, split, t_per_metric, train_p=0.6, test_p=0.2, val_p=0.2):
+    def compute_seqs_ordered(self, t_per_metric, train_p, test_p, val_p):
         # Map observations into sequences of samples
         self.valid_seq_list = []
         n_seq = t_per_metric[0] // self.seq_len
 
         offset = 0
-        if split==0:
+        if self.split==0:
             n_seq = math.floor(n_seq*train_p)
-        elif split==1:
+        elif self.split==1:
             offset = math.floor(n_seq*train_p)
             n_seq = math.floor(n_seq*test_p)   
         else:
@@ -129,7 +163,7 @@ class OfflinePrometheusMetrics(Dataset):
             self.valid_seq_list.append((start, end))
 
 
-    def compute_seqs_shuffle(self, split, t_per_metric, train_p=0.6, test_p=0.2, val_p=0.2):
+    def compute_seqs_shuffle(self, t_per_metric, train_p, test_p, val_p):
         # Map observations into sequences of samples
         self.valid_seq_list = []
         valid_seq_list_aux = []
@@ -140,13 +174,12 @@ class OfflinePrometheusMetrics(Dataset):
             end = start + self.seq_len - 1
             valid_seq_list_aux.append((start, end))
 
-        # Use 3 as a random seed to keep consistency
-        random.Random(3).shuffle(valid_seq_list_aux)
+        random.Random(SEED).shuffle(valid_seq_list_aux)
 
         offset = 0
-        if split==0:
+        if self.split==0:
             n_seq = math.floor(n_seq*train_p)
-        elif split==1:
+        elif self.split==1:
             offset = math.floor(n_seq*train_p)
             n_seq = math.floor(n_seq*test_p)   
         else:
@@ -155,6 +188,11 @@ class OfflinePrometheusMetrics(Dataset):
 
         self.valid_seq_list = valid_seq_list_aux[offset:n_seq+offset]
 
+    def __metric_names__(self):
+        return list(self.metric_names)
+
+    def __seq_len__(self):
+        return self.seq_len
 
     def __len__(self):
         """

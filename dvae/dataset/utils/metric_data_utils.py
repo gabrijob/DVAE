@@ -6,31 +6,40 @@ import os
 
 svc_datadir = './data/TeaMe_dataset_d15/teastore-webui' 
 
-def plot_measurements_from_batch(batch, save_file_path):
-     
-    # generate some data for the curves
-    x = np.linspace(0, 10, 100)
-    n = 3  # number of curves to plot
-    y = [np.sin(x), np.cos(x), np.tan(x)]  # list of y arrays
+def plot_n_grids_two_curves_subgraph(y_orig, y_prime, rows, cols, y_names, savepath):
+    
+    fig, ax = plt.subplots(rows, cols, sharex='col', sharey='row', figsize=(20,10))
 
-    # create a new figure and set its size
-    fig = plt.figure(figsize=(8, 6))
+    seq_len = y_orig.shape[1]
+    x_arr = range(0, seq_len)
 
-    # plot the curves
-    for i in range(n):
-        plt.plot(x, y[i], label='curve {}'.format(i+1))
+    y_count = 0
+    for i in range(rows):
+        for j in range(cols):
+            ax[i, j].set(xlabel='time(s)', ylim=(0,1))
+            ax[i, j].plot(x_arr, y_orig[y_count,:], label='Original')
+            ax[i, j].plot(x_arr, y_prime[y_count,:], label='Generated')
+            ax[i, j].legend(title = y_names[y_count])
 
-    # add a legend to the plot
-    plt.legend()
+            y_count = y_count + 1
 
-    # add labels to the axes
-    plt.xlabel('x')
-    plt.ylabel('y')
+    if savepath != '':
+        plt.savefig(savepath, dpi=(200))
 
-    # save the plot to a file
-    plt.savefig(save_file_path, dpi=300, bbox_inches='tight')
+    plt.close()
 
 
+def plot_two_curves_graph(x_arr, y1_arr, y2_arr, x_label='x', y_label='y', y1_label='y1', y2_label='y2', title='x y1 y2 Graph', savepath='' ):
+
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1)
+    ax.set(xlabel=x_label, ylabel=y_label, ylim=(0,1))
+    ax.plot(x_arr, y1_arr, label=y1_label)
+    ax.plot(x_arr, y2_arr, label=y2_label)
+    ax.legend(title=title, loc="upper left")
+    if savepath != '':
+        plt.savefig(savepath)
+    plt.close()
 
 
 def plot_measurements_from_json(file_path, save_file_path):
@@ -50,11 +59,12 @@ def plot_measurements_from_json(file_path, save_file_path):
     x = range(len(results[0]['values']))
     y = [r[1] for r in results[0]['values']]
     y = np.array(y, dtype=np.float32)
-    #scaler = preprocessing.MaxAbsScaler()
-    #y_scaled = scaler.fit_transform(np.array(y).reshape(-1, 1))
+    scaler = preprocessing.MaxAbsScaler()
+    y_scaled = scaler.fit_transform(np.array(y).reshape(-1, 1))
 
     fig, ax = plt.subplots()
-    ax.plot(x, y)
+    ax.set(ylim=(0,1))
+    ax.plot(x, y_scaled)
 
     ax.set(xlabel='timestamp', ylabel='value',
            title=metric_name)

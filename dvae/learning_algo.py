@@ -204,8 +204,8 @@ class LearningAlgorithm():
 
             # KL warm-up
             if epoch % 10 == 0 and kl_warm < 1:
-                #kl_warm = (epoch // 10) * 0.2 
-                kl_warm = 1
+                kl_warm = (epoch // 10) * 0.2 
+                #kl_warm = 1
                 logger.info('KL warm-up, anneal coeff: {}'.format(kl_warm))
 
 
