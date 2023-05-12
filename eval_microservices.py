@@ -282,6 +282,145 @@ def eval_generation_masked(dataloader, metrics, batch_size=1, mask_t=1, masked_m
                               savepath=savepath)
 
 
+def eval_generation_masked_filling_window(dataloader, metrics, batch_size=1, mask_t=1, masked_metrics_idxs=[0]):
+    # Create eval directory
+    eval_dir = os.path.join(params['ret_dir'], 'eval_generation', 'masked')
+    if not(os.path.isdir(eval_dir)):
+                os.makedirs(eval_dir)
+
+    it = iter(dataloader)
+    for i in range(0, batch_size):
+        batch_data = next(it)
+        batch_data = batch_data.permute(1, 0, 2)
+
+        # Slice away all of th T-t_mask that should be predicted
+        masked_batch_data = torch.clone(batch_data[:-mask_t, :, :])
+        intern_masked_batch_data = torch.clone(masked_batch_data[:-mask_t, :, :])
+
+        for i_mask in range(0, mask_t):
+            # Append an instant of masked metrics 
+            mask_shape = list(masked_batch_data[-1:, :, :].size())
+            masked_batch_data = torch.cat((masked_batch_data, torch.rand(mask_shape)), 0)
+            #masked_batch_data = torch.cat((masked_batch_data, torch.zeros(mask_shape)), 0)
+
+            intern_masked_batch_data = torch.clone(masked_batch_data)
+            for idx in masked_metrics_idxs:
+                # Get idx metric from original input
+                intern_masked_batch_data[-1, :, idx] = batch_data[-mask_t+i_mask, :, idx]
+
+            with torch.no_grad():
+                recon_batch_data = dvae(masked_batch_data)
+                intern_recon_batch_data = dvae(intern_masked_batch_data)
+                masked_batch_data = recon_batch_data
+                intern_masked_batch_data = intern_recon_batch_data
+
+        orig_data = batch_data.to('cpu').detach().squeeze().numpy()
+        data_recon = recon_batch_data.to('cpu').detach().squeeze().numpy()
+        intern_data_recon = intern_recon_batch_data.to('cpu').detach().squeeze().numpy()
+
+        if i==0:
+            orig_input = np.transpose(orig_data)
+            generated_mask_full = np.transpose(data_recon)
+            generated_mask_partial = np.transpose(intern_data_recon)
+        else:
+            orig_input = np.concatenate((orig_input, np.transpose(orig_data)), axis=1)
+            generated_mask_full = np.concatenate((generated_mask_full, np.transpose(data_recon)), axis=1)
+            generated_mask_partial = np.concatenate((generated_mask_partial, np.transpose(intern_data_recon)), axis=1)
+
+    tot_seqs = range(0, orig_input.shape[1])
+    # Plot comparison graphs of regenerated inputs
+    mask_full_dir = os.path.join(eval_dir, 'MASK_FULL_{}_T-{}'.format(learning_algo.model_name, mask_t))
+    if not(os.path.isdir(mask_full_dir)):
+                os.makedirs(mask_full_dir)
+
+    mask_partial_dir = os.path.join(eval_dir, 'MASK_PARTIAL_{}_T-{}'.format(learning_algo.model_name, mask_t))
+    if not(os.path.isdir(mask_partial_dir)):
+                os.makedirs(mask_partial_dir)
+
+    for i, metric in enumerate(metrics):
+        savepath = os.path.join(mask_full_dir, 'eval_GEN_COMP_MASK_FULL_FW_{}_T-{}_{}.png'.format(learning_algo.model_name, mask_t, metric))
+        plot_two_curves_graph(tot_seqs, orig_input[i, :], generated_mask_full[i, :], x_label='time(s)', y_label='value',
+                              y1_label='Original', y2_label='Generated Full Mask', title=metric,
+                              savepath=savepath)
+        
+        savepath = os.path.join(mask_partial_dir, 'eval_GEN_COMP_MASK_PARTIAL_FW_{}_T-{}_{}.png'.format(learning_algo.model_name, mask_t, metric))
+        plot_two_curves_graph(tot_seqs, orig_input[i, :], generated_mask_partial[i, :], x_label='time(s)', y_label='value',
+                              y1_label='Original', y2_label='Generated Load&Config Mask', title=metric,
+                              savepath=savepath)
+
+
+def eval_generation_masked_sliding_window(dataloader, metrics, batch_size=1, mask_t=1, masked_metrics_idxs=[0]):
+    # Create eval directory
+    eval_dir = os.path.join(params['ret_dir'], 'eval_generation', 'masked')
+    if not(os.path.isdir(eval_dir)):
+                os.makedirs(eval_dir)
+
+    it = iter(dataloader)
+    for i in range(0, batch_size):
+        batch_data = next(it)
+        batch_data = batch_data.permute(1, 0, 2)
+
+        masked_batch_data = torch.clone(batch_data)
+
+        if mask_t == 0:
+            intern_masked_batch_data = torch.clone(batch_data)
+        else:
+            mask_shape = list(masked_batch_data[-mask_t:, :, :].size())
+            masked_batch_data[-mask_t:, :, :] = torch.from_numpy(mask_random(mask_shape))
+            #masked_batch_data[-mask_t:, :, :] = mask_zero()
+
+            intern_masked_batch_data = torch.clone(masked_batch_data)
+            for idx in masked_metrics_idxs:
+                intern_masked_batch_data[-mask_t:, :, idx] = batch_data[-mask_t:, :, idx]
+
+        with torch.no_grad():
+            recon_batch_data = dvae(masked_batch_data)
+            intern_recon_batch_data = dvae(intern_masked_batch_data)
+
+        orig_data = batch_data.to('cpu').detach().squeeze().numpy()
+        data_recon = recon_batch_data.to('cpu').detach().squeeze().numpy()
+        intern_data_recon = intern_recon_batch_data.to('cpu').detach().squeeze().numpy()
+
+        # Plot per sequence graphs
+        #savepath = os.path.join(eval_dir, 'eval_GEN_MASK_FULL_{}_T-{}_{}.png'.format(learning_algo.model_name, mask_t, i))
+        #plot_n_grids_two_curves_subgraph(y_orig=np.transpose(orig_data), y_prime=np.transpose(data_recon),
+        #                                 rows=3, cols=5, y_names=metrics, savepath=savepath)
+        #savepath = os.path.join(eval_dir, 'eval_GEN_MASK_PARTIAL_{}_T-{}_{}.png'.format(learning_algo.model_name, mask_t, i))
+        #plot_n_grids_two_curves_subgraph(y_orig=np.transpose(orig_data), y_prime=np.transpose(intern_data_recon),
+        #                                 rows=3, cols=5, y_names=metrics, savepath=savepath)
+        
+        if i==0:
+            orig_input = np.transpose(orig_data)
+            generated_mask_full = np.transpose(data_recon)
+            generated_mask_partial = np.transpose(intern_data_recon)
+        else:
+            orig_input = np.concatenate((orig_input, np.transpose(orig_data)), axis=1)
+            generated_mask_full = np.concatenate((generated_mask_full, np.transpose(data_recon)), axis=1)
+            generated_mask_partial = np.concatenate((generated_mask_partial, np.transpose(intern_data_recon)), axis=1)
+
+    tot_seqs = range(0, orig_input.shape[1])
+    # Plot comparison graphs of regenerated inputs
+    mask_full_dir = os.path.join(eval_dir, 'MASK_FULL_{}_T-{}'.format(learning_algo.model_name, mask_t))
+    if not(os.path.isdir(mask_full_dir)):
+                os.makedirs(mask_full_dir)
+
+    mask_partial_dir = os.path.join(eval_dir, 'MASK_PARTIAL_{}_T-{}'.format(learning_algo.model_name, mask_t))
+    if not(os.path.isdir(mask_partial_dir)):
+                os.makedirs(mask_partial_dir)
+
+    for i, metric in enumerate(metrics):
+        savepath = os.path.join(mask_full_dir, 'eval_GEN_COMP_MASK_FULL_{}_T-{}_{}.png'.format(learning_algo.model_name, mask_t, metric))
+        plot_two_curves_graph(tot_seqs, orig_input[i, :], generated_mask_full[i, :], x_label='time(s)', y_label='value',
+                              y1_label='Original', y2_label='Generated Full Mask', title=metric,
+                              savepath=savepath)
+        
+        savepath = os.path.join(mask_partial_dir, 'eval_GEN_COMP_MASK_PARTIAL_{}_T-{}_{}.png'.format(learning_algo.model_name, mask_t, metric))
+        plot_two_curves_graph(tot_seqs, orig_input[i, :], generated_mask_partial[i, :], x_label='time(s)', y_label='value',
+                              y1_label='Original', y2_label='Generated Load&Config Mask', title=metric,
+                              savepath=savepath)
+
+
+
 if __name__ == '__main__':
 
     params = Options().get_params()
@@ -308,7 +447,8 @@ if __name__ == '__main__':
 
     #eval_masking(dataloader=test_dataloader, masking_limit=seq_len, masked_metrics_idxs=[6, 9, 10, 11, 12, 13, 14])
     #eval_simple(dataloader=test_dataloader)
-    eval_generation(dataloader=test_dataloader, metrics=metrics, batch_size=1)
-    percentage_masked = 0.05
+    #eval_generation(dataloader=test_dataloader, metrics=metrics, batch_size=20)
+    percentage_masked = 0.1
     masked_t = int(seq_len*percentage_masked)
-    eval_generation_masked(dataloader=test_dataloader, metrics=metrics, batch_size=1, mask_t=1, masked_metrics_idxs=[3])
+    #eval_generation_masked(dataloader=test_dataloader, metrics=metrics, batch_size=3, mask_t=1, masked_metrics_idxs=[3])
+    eval_generation_masked_filling_window(dataloader=test_dataloader, metrics=metrics, batch_size=10, mask_t=masked_t, masked_metrics_idxs=[3])

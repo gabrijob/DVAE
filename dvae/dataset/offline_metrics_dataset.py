@@ -50,7 +50,7 @@ def build_dataloader(cfg):
     
 
 class OfflinePrometheusMetrics(Dataset):
-    def __init__(self, svc_datadir, seq_len, shuffle, split=0, dist_policy='', removed_idx=[5,6]):
+    def __init__(self, svc_datadir, seq_len, shuffle, split=0, dist_policy='', removed_idx=[]):
         self.seq_len = seq_len
         self.shuffle = shuffle
         self.split = split
