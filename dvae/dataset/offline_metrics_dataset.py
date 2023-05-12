@@ -13,7 +13,10 @@ import math
 from sklearn import preprocessing
 
 # Use 3 as a random seed to keep consistency across experiments
-SEED = 3
+SEED = 1
+
+# Hard-coded functions to be removed for test and validation
+DEFAULT_REMOVED_F_IDX = [6,0] # TODO: get it from argument
 
 
 # Get JSON (or other) files with the results of metrics queries from several days/workload sessions
@@ -26,13 +29,13 @@ def build_dataloader(cfg):
     batch_size = cfg.getint('DataFrame', 'batch_size')
     num_workers = cfg.getint('DataFrame', 'num_workers')
     sequence_len = cfg.getint('DataFrame', 'sequence_len')
-    is_functions = cfg.getboolean('DataFrame', 'functions')
+    dist_policy = cfg.get('DataFrame', 'dist_policy')
 
     # Training dataset
     split = 0 # train
-    train_dataset = OfflinePrometheusMetrics(svc_datadir=data_dir, seq_len=sequence_len, shuffle=shuffle, split=split, is_functions=is_functions)
+    train_dataset = OfflinePrometheusMetrics(svc_datadir=data_dir, seq_len=sequence_len, shuffle=shuffle, split=split, dist_policy=dist_policy)
     split = 2 # validation
-    val_dataset = OfflinePrometheusMetrics(svc_datadir=data_dir, seq_len=sequence_len, shuffle=shuffle, split=split, is_functions=is_functions)
+    val_dataset = OfflinePrometheusMetrics(svc_datadir=data_dir, seq_len=sequence_len, shuffle=shuffle, split=split, dist_policy=dist_policy)
     train_num = train_dataset.__len__()
     val_num = val_dataset.__len__()
     
@@ -47,67 +50,121 @@ def build_dataloader(cfg):
     
 
 class OfflinePrometheusMetrics(Dataset):
-    def __init__(self, svc_datadir, seq_len, shuffle, split=0, is_functions=False):
+    def __init__(self, svc_datadir, seq_len, shuffle, split=0, dist_policy='', removed_idx=[5,6]):
         self.seq_len = seq_len
         self.shuffle = shuffle
         self.split = split
 
+        # Default set of functions
         functions = ["abssin", "abscos", "sin", "cos", "bell", "linear", "log"]
+        nb_func_variations = 10
+        default_data_dist = [0.6, 0.2, 0.2]
+        split_name = ['TRAINING', 'TEST', 'VALIDATION']
+
+        # Data distribution proportions for ['training', 'test', 'validation']
+        data_dist = [0, 0, 0]
+        data_dist[split] = 1
+        removed_dirs = []
         
-        if (is_functions):
-            # Random.sample should not generate any duplicate indexes
-            #removed_idx = random.Random(SEED).sample(range(0, len(functions)-1), 2)
-            removed_idx = [6,0]
-
-            # Data distribution proportions for ['training', 'test', 'validation']
-            data_dist = [0, 0, 0]
-            data_dist[split] = 1
-
+        # If whole function data should be removed for this dataset
+        if (dist_policy == 'function'):
+            removed_functions = []
+            if removed_idx:
+                removed_f_idx = removed_idx
+            else:
+                # Random.sample should not generate any duplicate indexes
+                removed_f_idx = random.Random(SEED).sample(range(0, len(functions)-1), 2)
+            
             # If 'training', use the non-removed functions
             if split==0:
-                del functions[removed_idx[0]]
-                del functions[removed_idx[1]]
+                removed_functions = [ functions[i] for i in removed_f_idx ]
             # If 'test' or 'evaluation', use only one of the removed functions
             else:
-                functions = [functions.pop(removed_idx[split-1])]
+                removed_functions = [functions[i] for i in range(len(functions)) if i != removed_f_idx[split-1]]
 
-            print(functions)
+            print("The following functions will be excluded for the {} data set:".format(split_name[self.split]))
+            print(removed_functions)
+            for func in removed_functions:
+                removed_dirs.extend([func+"_{}".format(i) for i in range(1,nb_func_variations+1)])
+
+        # If only some variations of functions should be removed for this dataset
+        elif (dist_policy == 'variation'):
+            if removed_idx:
+                removed_v_idx = removed_idx
+            else:
+                # Considering 60/20/20 division for train/test/validation
+                nb_removed_v_idx = math.floor((1-default_data_dist[0]) * nb_func_variations)
+                # Random.sample should not generate any duplicate indexes
+                removed_v_idx = random.Random(SEED).sample(range(1, nb_func_variations+1), nb_removed_v_idx)
+
+            removed_vars = []
+            # If 'training', will use the non-removed function variations
+            if split==0:
+                removed_vars = removed_v_idx
+            # If 'test' or 'evaluation', will use only a share of the removed function variations
+            else:
+                slice = math.floor(default_data_dist[split] * nb_func_variations)
+                # First slice of removed indexes are used for testing, second slice for validation
+                kept_idx = [ removed_v_idx[:slice], removed_v_idx[slice:] ]
+                # All of the rest function variations will not be considered
+                removed_vars = [i for i in range(nb_func_variations) if i not in kept_idx[split-1]]
+                
+            print("The following variations will be excluded for the {} data set:".format(split_name[self.split]))
+            print(removed_vars)
+            for func in functions:
+                removed_dirs.extend([func+"_{}".format(i) for i in removed_vars])
+
+        # If no particular function data should be removed, then the shares used for ['training', 'test', 'validation'] will be picked randomly  
         else:
-            # Data distribution proportions for ['training', 'test', 'validation']
-            data_dist = [0.6, 0.2, 0.2]
+            # Set data distribution proportions for ['training', 'test', 'validation']
+            data_dist = default_data_dist
 
-        self.read_data(svc_datadir, functions, data_dist[0], data_dist[1], data_dist[2])
+        #print("The following directories will be excluded for the {} data set:".format(split_name[self.split]))
+        #print(removed_dirs)
+        # Read metric files
+        self.read_data(svc_datadir, removed_dirs, data_dist[0], data_dist[1], data_dist[2])
 
 
-    def read_data(self, svc_datadir, functions, train_p=0, test_p=0, val_p=0):
-        
+
+    def read_data(self, root_dir, removed_dirs, train_p=0, test_p=0, val_p=0):
+        interesting_metrics = [
+            "container_cpu_usage_seconds_total",
+            "container_fs_writes_bytes_total",
+            "container_memory_usage_bytes", 
+            "container_network_receive_packets_total", 
+            "container_network_transmit_packets_total"]
+
         # Start reading files
         metric_pool = {} # {'metric_1':[...], 'metric_2':[...], ..., 'metric_n':[...]}
         files = []
-        for func_dir in functions:
-            exp_dirs = os.listdir(svc_datadir+'/'+func_dir)
-            for exp_dir in exp_dirs:
-                f_in_dir = os.listdir(svc_datadir+'/'+func_dir+'/'+exp_dir)
-                files.extend([func_dir+'/'+exp_dir+'/'+f for f in f_in_dir if os.path.isfile(svc_datadir+'/'+func_dir+'/'+exp_dir+'/'+f)])
+        for dirpath, dirnames, filenames in os.walk(root_dir):
+            #if dirnames in functions:
+            dirnames[:] = [d for d in dirnames if d not in removed_dirs]
+            for filename in filenames:
+                if filename.endswith('.json'):
+                    filepath = os.path.join(dirpath, filename)
+                    files.append(filepath)    
 
         # For metric in metric_names:
         for fname in files:
             # Read result metrics from datadir/metric.json 
-            f = open(svc_datadir+'/'+fname)
+            f = open(fname)
             data = json.load(f)
             results = data['data']['result']
             
             # Insert time-series into metric_pool
             metric = os.path.basename(fname).split('.')[0]
             truncate_at = (len(results[0]['values']) // self.seq_len) * self.seq_len
-            if metric in metric_pool:
-                values = metric_pool[metric]
-                # appending metrics of different experiments must be done carefuly as to avoid having the overlap of sequences
-                # for example, a sequence containing the end of an experiment and the beginning of another 
-                values.extend(results[0]['values'][:truncate_at]) 
-                metric_pool[metric] = values
-            else:
-                metric_pool[metric] = results[0]['values'][:truncate_at]
+            if metric in interesting_metrics:
+                # Check if we already have data of another experiment for this metric in the metric pool
+                if metric in metric_pool:
+                    values = metric_pool[metric]
+                    # appending metrics of different experiments must be done carefuly as to avoid having the overlap of sequences
+                    # for example, a sequence containing the end of an experiment and the beginning of another 
+                    values.extend(results[0]['values'][:truncate_at]) 
+                    metric_pool[metric] = values
+                else:
+                    metric_pool[metric] = results[0]['values'][:truncate_at]
 
 
         # Assert that every metric has the same number of samples
@@ -207,6 +264,7 @@ class OfflinePrometheusMetrics(Dataset):
         Where #L is the sequence's length and #M is the number of metrics.
         """
         seq_start, seq_end = self.valid_seq_list[index]
-        sample_seq = self.metric_matrix[seq_start:seq_end, :]
+        # seq_end+1 because the slice operator ':' does not include the end
+        sample_seq = self.metric_matrix[seq_start:seq_end+1, :]
 
         return sample_seq

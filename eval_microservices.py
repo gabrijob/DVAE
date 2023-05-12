@@ -8,8 +8,7 @@ import argparse
 from tqdm import tqdm
 import torch
 import numpy as np
-import librosa
-import soundfile as sf
+import random
 import matplotlib.pyplot as plt
 from dvae.dataset.utils.metric_data_utils import plot_two_curves_graph, plot_n_grids_two_curves_subgraph
 from dvae.learning_algo import LearningAlgorithm
@@ -25,8 +24,6 @@ np.random.seed(0)
 # DataSet and Dataloader not inside this class
 # rmse, kld and aed lists are not inside the class either
 
-# TODO: Fazer teste de comparaçao para mascaras (t-1, t-2, t-5, t-10, ...), se possivel mudar a funçao geradora tambem
-# TODO: Colocar todos os graficos na mesma escala [0,1]
 
 
 class Options:
@@ -41,8 +38,8 @@ class Options:
         self.parser.add_argument('--cfg', type=str, default=None, help='config path')
         self.parser.add_argument('--saved_dict', type=str, default=None, help='trained model dict')
         # Dataset
-        self.parser.add_argument('--test_dir', type=str, default='./data/TeaMe_dataset_d15/teastore-webui', help='test dataset')
-        self.parser.add_argument('--anomaly_test_dir', type=str, default='./data/TeaMe_dataset_d15/teastore-webui', help='anomaly test dataset')
+        self.parser.add_argument('--test_dir', type=str, default='/home/ggrabher/Code/the-prometheus-metrics-dataset/5-minutes-metrics/teastore/teastore-webui', help='test dataset')
+        self.parser.add_argument('--anomaly_test_dir', type=str, default='/home/ggrabher/Code/the-prometheus-metrics-dataset/5-minutes-metrics/teastore/teastore-db', help='anomaly test dataset')
         # Results directory
         self.parser.add_argument('--ret_dir', type=str, default='./data/tmp', help='tmp dir for metric reconstruction')
     def get_params(self):
@@ -51,6 +48,17 @@ class Options:
         params = vars(self.opt)
         return params
 
+def mask_zero():
+    """
+    Static mask of value 0.
+    """
+    return 0
+
+def mask_random(size=None):
+    """
+    Mask of random floats between the half-open interval [0.0, 1.0).
+    """
+    return np.random.random(size)
 
 def eval_simple(dataloader):
 
@@ -217,9 +225,11 @@ def eval_generation_masked(dataloader, metrics, batch_size=1, mask_t=1, masked_m
         masked_batch_data = torch.clone(batch_data)
 
         if mask_t == 0:
-                intern_masked_batch_data = torch.clone(batch_data)
+            intern_masked_batch_data = torch.clone(batch_data)
         else:
-            masked_batch_data[-mask_t:, :, :] = 0
+            mask_shape = list(masked_batch_data[-mask_t:, :, :].size())
+            masked_batch_data[-mask_t:, :, :] = torch.from_numpy(mask_random(mask_shape))
+            #masked_batch_data[-mask_t:, :, :] = mask_zero()
 
             intern_masked_batch_data = torch.clone(masked_batch_data)
             for idx in masked_metrics_idxs:
@@ -289,7 +299,7 @@ if __name__ == '__main__':
     print('Total params: %.2fM' % (sum(p.numel() for p in dvae.parameters()) / 1000000.0))
 
 
-    test_dataset = OfflinePrometheusMetrics(svc_datadir=params['test_dir'], shuffle=False, seq_len=30, split=1, is_functions=True)
+    test_dataset = OfflinePrometheusMetrics(svc_datadir=params['test_dir'], shuffle=False, seq_len=30, split=1, dist_policy='function')
     test_num = test_dataset.__len__()
     seq_len = test_dataset.__seq_len__()
     metrics = test_dataset.__metric_names__()
@@ -298,93 +308,7 @@ if __name__ == '__main__':
 
     #eval_masking(dataloader=test_dataloader, masking_limit=seq_len, masked_metrics_idxs=[6, 9, 10, 11, 12, 13, 14])
     #eval_simple(dataloader=test_dataloader)
-    eval_generation(dataloader=test_dataloader, metrics=metrics, batch_size=60)
-    eval_generation_masked(dataloader=test_dataloader, metrics=metrics, batch_size=60, mask_t=5, masked_metrics_idxs=[6, 9, 10, 11, 12, 13, 14])
-    
-
-
-
-"""
-anomaly_test_dataset = OfflinePrometheusMetrics(svc_datadir=params['anomaly_test_dir'], shuffle=True, seq_len=30, split=1)
-test_num = anomaly_test_dataset.__len__()
-print('Anomaly Test samples: {}'.format(test_num))
-anomaly_test_dataloader = torch.utils.data.DataLoader(anomaly_test_dataset, batch_size=1, shuffle=True, num_workers=2)
-
-
-list_rmse_anomaly = []
-list_aed_anomaly = []
-list_kld_anomaly = []
-print("Anomaly Metrics Testing")
-for _, batch_data in tqdm(enumerate(anomaly_test_dataloader)):
-
-    #batch_data = batch_data.to('cuda')
-    batch_data = batch_data.permute(1, 0, 2)
-    with torch.no_grad():
-        recon_batch_data = dvae(batch_data)
-
-    orig_data = batch_data.to('cpu').detach().squeeze().numpy()
-    data_recon = recon_batch_data.to('cpu').detach().squeeze().numpy()
-
-    RMSE = np.sqrt(np.square(orig_data - data_recon).mean())
-    RMSE = np.sqrt(np.square(orig_data - data_recon).mean())
-    AED = np.linalg.norm(orig_data - data_recon)
-
-    seq_len = orig_data.shape[0]
-    if learning_algo.model_name == 'DSAE':
-        loss_kl_z = loss_KLD(dvae.z_mean, dvae.z_logvar, dvae.z_mean_p, dvae.z_logvar_p)
-        loss_kl_v = loss_KLD(dvae.v_mean, dvae.v_logvar, dvae.v_mean_p, dvae.v_logvar_p)
-        loss_kl = loss_kl_z + loss_kl_v
-    else:
-        loss_kl = loss_KLD(dvae.z_mean, dvae.z_logvar, dvae.z_mean_p, dvae.z_logvar_p)
-    KLD = loss_kl / seq_len
-
-    list_rmse_anomaly.append(RMSE)
-    list_kld_anomaly.append(KLD)
-    list_aed_anomaly.append(AED)
-
-np_rmse_anomaly = np.array(list_rmse_anomaly)
-np_aed_anomaly = np.array(list_aed_anomaly)
-np_kld_anomaly = np.array(list_kld_anomaly)
-print('RMSE anomaly: {:.4f}'.format(np.mean(np_rmse_anomaly)))
-print('KLD anomaly: {:.4f}'.format(np.mean(np_kld_anomaly)))
-print('AED anomaly: {:.4f}'.format(np.mean(np_aed_anomaly)))
-"""
-
-"""
-plt.clf()
-fig = plt.figure(figsize=(8,6))
-plt.rcParams['font.size'] = 12
-#plt.plot(np_rmse, label='Evaluation')
-plt.violinplot(np_rmse, showmedians=True)
-plt.xticks([1], ['RMSE'])
-#plt.legend(fontsize=16, title='{}: Root Mean Square Error'.format(learning_algo.model_name), title_fontsize=20)
-#plt.xlabel('seq', fontdict={'size':16})
-plt.ylabel('loss', fontdict={'size':16})
-fig_file = os.path.join(params['ret_dir'], 'evaluation_RMSE_{}.png'.format(learning_algo.model_name))
-plt.savefig(fig_file) 
-
-
-plt.clf()
-fig = plt.figure(figsize=(8,6))
-plt.rcParams['font.size'] = 12
-#plt.plot(np_kld, label='Evaluation')
-plt.violinplot(np_kld, showmedians=True)
-plt.xticks([1], ['KLD'])
-#plt.legend(fontsize=16, title='{}: KL Divergence'.format(learning_algo.model_name), title_fontsize=20)
-#plt.xlabel('seq', fontdict={'size':16})
-plt.ylabel('loss', fontdict={'size':16})
-fig_file = os.path.join(params['ret_dir'], 'evaluation_KLD_{}.png'.format(learning_algo.model_name))
-plt.savefig(fig_file)
-
-plt.clf()
-fig = plt.figure(figsize=(8,6))
-plt.rcParams['font.size'] = 12
-#plt.plot(np_aed, label='Evaluation')
-plt.violinplot(np_aed, showmedians=True)
-plt.xticks([1], ['AED'])
-#plt.legend(fontsize=16, title='{}: Euclidian Disitance'.format(learning_algo.model_name), title_fontsize=20)
-#plt.xlabel('seq', fontdict={'size':16})
-plt.ylabel('loss', fontdict={'size':16})
-fig_file = os.path.join(params['ret_dir'], 'evaluation_AED_{}.png'.format(learning_algo.model_name))
-plt.savefig(fig_file)
-"""
+    eval_generation(dataloader=test_dataloader, metrics=metrics, batch_size=1)
+    percentage_masked = 0.05
+    masked_t = int(seq_len*percentage_masked)
+    eval_generation_masked(dataloader=test_dataloader, metrics=metrics, batch_size=1, mask_t=1, masked_metrics_idxs=[3])

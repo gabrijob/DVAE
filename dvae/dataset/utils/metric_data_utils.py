@@ -4,7 +4,8 @@ import numpy as np
 from sklearn import preprocessing
 import os
 
-svc_datadir = './data/TeaMe_dataset_d15/teastore-webui' 
+root_dir = '/home/ggrabher/Code/the-prometheus-metrics-dataset/'
+svc_datadir = '5-minutes-metrics/teastore/teastore-webui' 
 
 def plot_n_grids_two_curves_subgraph(y_orig, y_prime, rows, cols, y_names, savepath):
     
@@ -75,8 +76,10 @@ def plot_measurements_from_json(file_path, save_file_path):
 
 
 if __name__ == '__main__':
-    dirs = os.listdir(svc_datadir)
+    full_dir_path = root_dir + svc_datadir
+    dirs = os.listdir(full_dir_path)
     files = []
+    """
     for dir in dirs:
         f_in_dir = os.listdir(svc_datadir+'/'+dir)
         files.extend([dir+'/'+f for f in f_in_dir if os.path.isfile(svc_datadir+'/'+dir+'/'+f)])
@@ -90,3 +93,20 @@ if __name__ == '__main__':
                 os.makedirs('./data/tmp/' + exp_name)
         save_file_path = './data/tmp/' + exp_name + '/' + f_name.split('.')[0] + '.png' 
         plot_measurements_from_json(json_file_path, save_file_path)
+    """
+    for dirpath, dirnames, filenames in os.walk(full_dir_path):
+        for filename in filenames:
+            if filename.endswith('.json'):
+                filepath = os.path.join(dirpath, filename)
+                files.append(filepath) 
+
+    for fpath in files:
+        # plot the measurements from the JSON file and save as a PNG file
+        dirpath = os.path.dirname(fpath)
+        dirpath = dirpath[len(root_dir):]
+        if not(os.path.isdir('./data/tmp/dataset_plots/' + dirpath)):
+                os.makedirs('./data/tmp/dataset_plots/' + dirpath)
+
+        fname = os.path.basename(fpath).split('.')[0]
+        save_file_path = './data/tmp/dataset_plots/' + dirpath + '/' + fname + '.png' 
+        plot_measurements_from_json(fpath, save_file_path)
