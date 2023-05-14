@@ -447,8 +447,8 @@ if __name__ == '__main__':
 
     #eval_masking(dataloader=test_dataloader, masking_limit=seq_len, masked_metrics_idxs=[6, 9, 10, 11, 12, 13, 14])
     #eval_simple(dataloader=test_dataloader)
-    #eval_generation(dataloader=test_dataloader, metrics=metrics, batch_size=20)
+    eval_generation(dataloader=test_dataloader, metrics=metrics, batch_size=2)
     percentage_masked = 0.1
     masked_t = int(seq_len*percentage_masked)
     #eval_generation_masked(dataloader=test_dataloader, metrics=metrics, batch_size=3, mask_t=1, masked_metrics_idxs=[3])
-    eval_generation_masked_filling_window(dataloader=test_dataloader, metrics=metrics, batch_size=10, mask_t=masked_t, masked_metrics_idxs=[3])
+    eval_generation_masked_filling_window(dataloader=test_dataloader, metrics=metrics, batch_size=2, mask_t=masked_t, masked_metrics_idxs=[3])
