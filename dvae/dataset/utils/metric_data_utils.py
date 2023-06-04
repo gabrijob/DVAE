@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn import preprocessing
 import os
+import math
 
 root_dir = '/home/ggrabher/Code/the-prometheus-metrics-dataset/'
 svc_datadir = '5-minutes-metrics/teastore/teastore-webui' 
@@ -23,6 +24,33 @@ def plot_n_grids_two_curves_subgraph(y_orig, y_prime, rows, cols, y_names, savep
             ax[i, j].legend(title = y_names[y_count])
 
             y_count = y_count + 1
+
+    if savepath != '':
+        plt.savefig(savepath, dpi=(200))
+
+    plt.close()
+
+
+def plot_n_batches_two_curves_subgraph(nb_batches, seq_len, line_len, y_orig, y_prime, title, savepath):
+    cols = line_len
+    rows = math.floor(nb_batches / line_len)
+
+    fig, ax = plt.subplots(rows, cols, sharex='col', sharey='row', figsize=(20,10))
+
+    #seq_len = y_orig.shape[1]
+    x_arr = range(0, seq_len)
+
+    y_start = 0
+    y_end = seq_len
+    for i in range(rows):
+        for j in range(cols):
+            ax[i, j].set(xlabel='time(s)', ylim=(0,1))
+            ax[i, j].plot(x_arr, y_orig[y_start:y_end], label='Original')
+            ax[i, j].plot(x_arr, y_prime[y_start:y_end], label='Generated')
+            ax[i, j].legend(title = "Batch {}".format(i*line_len + j))
+
+            y_start = y_end
+            y_end = y_end + seq_len 
 
     if savepath != '':
         plt.savefig(savepath, dpi=(200))
