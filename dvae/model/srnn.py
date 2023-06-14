@@ -206,6 +206,8 @@ class SRNN(nn.Module):
                 dic_layers['dropout'+str(n)] = nn.Dropout(p=self.dropout_p)
         self.mlp_hz_x = nn.Sequential(dic_layers)    
         self.gen_out = nn.Linear(dim_hz_x, self.y_dim)
+        self.y_mean = nn.Linear(dim_hz_x, self.y_dim)
+        self.y_var = nn.Linear(dim_hz_x, self.y_dim)
 
 
     def reparameterization(self, mean, logvar):
@@ -272,8 +274,13 @@ class SRNN(nn.Module):
         hz_x = torch.cat((h, z), -1)
         hz_x = self.mlp_hz_x(hz_x)
         y = self.gen_out(hz_x)
+        y_mean = self.y_mean(hz_x)
+        y_var = self.y_var(hz_x)
 
-        return y
+        y_lower = y_mean - y_var * 2
+        y_upper = y_mean + y_var * 2
+
+        return y_mean, y_lower, y_upper
 
     
     def forward(self, x):
@@ -288,7 +295,7 @@ class SRNN(nn.Module):
         z_0 = torch.zeros(1, batch_size, self.z_dim).to(self.device)
         z_tm1 = torch.cat((z_0, self.z[:-1, :, :]), 0)
         self.z_mean_p, self.z_logvar_p = self.generation_z(h, z_tm1)
-        y = self.generation_x(self.z, h)
+        y, self.y_lower_bound, self.y_upper_bound = self.generation_x(self.z, h)
 
         return y
 

@@ -70,6 +70,21 @@ def plot_two_curves_graph(x_arr, y1_arr, y2_arr, x_label='x', y_label='y', y1_la
         plt.savefig(savepath)
     plt.close()
 
+def plot_n_curves(x_arr, y_arrs, labels, x_label, y_label, title, savepath=''):
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1)
+    ax.set(xlabel=x_label, ylabel=y_label, ylim=(0, 1))
+    
+    for i, y in enumerate(y_arrs):
+        ax.plot(x_arr, y, label=labels[i])
+    
+    ax.legend(title=title, loc="upper left")
+    
+    if savepath != '':
+        plt.savefig(savepath)
+    
+    plt.close()
+
 
 def plot_measurements_from_json(file_path, save_file_path):
     """

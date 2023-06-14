@@ -17,7 +17,7 @@ import pickle
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-from .utils import myconf, get_logger, loss_ISD, loss_KLD, loss_MPJPE, loss_JointNorm, loss_MSE
+from .utils import myconf, get_logger, loss_ISD, loss_KLD, loss_MPJPE, loss_PIQD
 from .dataset import h36m_dataset, speech_dataset, offline_metrics_dataset
 from .model import build_VAE, build_DKF, build_STORN, build_VRNN, build_SRNN, build_RVAE, build_DSAE
 
@@ -160,7 +160,10 @@ class LearningAlgorithm():
         early_stop_patience = self.cfg.getint('Training', 'early_stop_patience')
         save_frequency = self.cfg.getint('Training', 'save_frequency')
         beta = self.cfg.getfloat('Training', 'beta')
+        gamma = 1
+        alpha = 0.05
         kl_warm = 0
+        qd_warm = 0
 
         # Create python list for loss
         if not self.params['reload']:
@@ -168,8 +171,10 @@ class LearningAlgorithm():
             val_loss = np.zeros((epochs,))
             train_recon = np.zeros((epochs,))
             train_kl = np.zeros((epochs,))
+            train_qd = np.zeros((epochs,))
             val_recon = np.zeros((epochs,))
             val_kl = np.zeros((epochs,))
+            val_qd = np.zeros((epochs,))
             best_val_loss = np.inf
             cpt_patience = 0
             cur_best_epoch = epochs
@@ -188,8 +193,10 @@ class LearningAlgorithm():
             val_loss = np.pad(loss_log['val_loss'], (0, epochs-start_epoch), mode='constant', constant_values=0)
             train_recon = np.pad(loss_log['train_recon'], (0, epochs-start_epoch), mode='constant', constant_values=0)
             train_kl = np.pad(loss_log['train_kl'], (0, epochs-start_epoch), mode='constant', constant_values=0)
+            train_qd = np.pad(loss_log['train_qd'], (0, epochs-start_epoch), mode='constant', constant_values=0)
             val_recon = np.pad(loss_log['val_recon'], (0, epochs-start_epoch), mode='constant', constant_values=0)
             val_kl = np.pad(loss_log['val_kl'], (0, epochs-start_epoch), mode='constant', constant_values=0)
+            val_qd = np.pad(loss_log['val_qd'], (0, epochs-start_epoch), mode='constant', constant_values=0)
             best_val_loss = checkpoint['best_val_loss']
             cpt_patience = 0
             cur_best_epoch = start_epoch
@@ -207,6 +214,11 @@ class LearningAlgorithm():
                 kl_warm = (epoch // 10) * 0.2 
                 #kl_warm = 1
                 logger.info('KL warm-up, anneal coeff: {}'.format(kl_warm))
+            
+            # QD warm-up
+            if epoch >= 30 and qd_warm < 1:
+                qd_warm = 1.0
+                logger.info('QD warm-up, anneal coeff: {}'.format(qd_warm))
 
 
             # Batch training
@@ -241,7 +253,11 @@ class LearningAlgorithm():
                     loss_kl = loss_KLD(self.model.z_mean, self.model.z_logvar, self.model.z_mean_p, self.model.z_logvar_p)
                 loss_kl = kl_warm * beta * loss_kl / (seq_len * bs)
 
-                loss_tot = loss_recon + loss_kl
+                # Quality-Drive Prediction Interval Loss
+                loss_qd = loss_PIQD(batch_data, self.model.y_lower_bound, self.model.y_upper_bound, alpha=alpha)
+                loss_qd = loss_qd * gamma * qd_warm
+
+                loss_tot = loss_recon + loss_kl + loss_qd
                 optimizer.zero_grad()
                 loss_tot.backward()
                 optimizer.step()
@@ -249,7 +265,8 @@ class LearningAlgorithm():
                 train_loss[epoch] += loss_tot.item() * bs
                 train_recon[epoch] += loss_recon.item() * bs
                 train_kl[epoch] += loss_kl.item() * bs
-                
+                train_qd[epoch] += loss_qd.item() * bs
+
             # Validation
             for _, batch_data in enumerate(val_dataloader):
 
@@ -282,22 +299,29 @@ class LearningAlgorithm():
                     loss_kl = loss_KLD(self.model.z_mean, self.model.z_logvar, self.model.z_mean_p, self.model.z_logvar_p)
                 loss_kl = kl_warm * beta * loss_kl / (seq_len * bs)
 
-                loss_tot = loss_recon + loss_kl
+                # Quality-Drive Prediction Interval Loss
+                loss_qd = loss_PIQD(batch_data, self.model.y_lower_bound, self.model.y_upper_bound, alpha=alpha)
+                loss_qd = loss_qd * gamma * qd_warm
+
+                loss_tot = loss_recon + loss_kl + loss_qd
 
                 val_loss[epoch] += loss_tot.item() * bs
                 val_recon[epoch] += loss_recon.item() * bs
                 val_kl[epoch] += loss_kl.item() * bs
+                val_qd[epoch] += loss_qd.item() * bs
 
             # Loss normalization
             train_loss[epoch] = train_loss[epoch]/ train_num
             val_loss[epoch] = val_loss[epoch] / val_num
             train_recon[epoch] = train_recon[epoch] / train_num 
             train_kl[epoch] = train_kl[epoch]/ train_num
+            train_qd[epoch] = train_qd[epoch] / train_num
             val_recon[epoch] = val_recon[epoch] / val_num 
             val_kl[epoch] = val_kl[epoch] / val_num
+            val_qd[epoch] = val_qd[epoch] / val_num
             
             # Early stop patiance
-            if val_loss[epoch] < best_val_loss or kl_warm <1:
+            if val_loss[epoch] < best_val_loss or kl_warm <1 or qd_warm <1:
                 best_val_loss = val_loss[epoch]
                 cpt_patience = 0
                 best_state_dict = self.model.state_dict()
@@ -310,10 +334,10 @@ class LearningAlgorithm():
             end_time = datetime.datetime.now()
             interval = (end_time - start_time).seconds / 60
             logger.info('Epoch: {} training time {:.2f}m'.format(epoch, interval))
-            logger.info('Train => tot: {:.2f} recon {:.2f} KL {:.2f} Val => tot: {:.2f} recon {:.2f} KL {:.2f}'.format(train_loss[epoch], train_recon[epoch], train_kl[epoch], val_loss[epoch], val_recon[epoch], val_kl[epoch]))
+            logger.info('Train => tot: {:.2f} recon {:.2f} KL {:.2f} QD {:.2f} Val => tot: {:.2f} recon {:.2f} KL {:.2f} QD {:.2f}'.format(train_loss[epoch], train_recon[epoch], train_kl[epoch], train_qd[epoch], val_loss[epoch], val_recon[epoch], val_kl[epoch], val_qd[epoch]))
 
             # Stop traning if early-stop triggers
-            if cpt_patience == early_stop_patience and kl_warm >= 1.0:
+            if cpt_patience == early_stop_patience and kl_warm >= 1.0 and qd_warm >= 1.0:
                 logger.info('Early stop patience achieved')
                 break
 
@@ -323,8 +347,10 @@ class LearningAlgorithm():
                             'val_loss': val_loss[:cur_best_epoch+1],
                             'train_recon': train_recon[:cur_best_epoch+1],
                             'train_kl': train_kl[:cur_best_epoch+1], 
+                            'train_qd': train_qd[:cur_best_epoch+1], 
                             'val_recon': val_recon[:cur_best_epoch+1], 
-                            'val_kl': val_kl[:cur_best_epoch+1]}
+                            'val_kl': val_kl[:cur_best_epoch+1],
+                            'val_qd': val_qd[:cur_best_epoch+1]}
                 save_file = os.path.join(save_dir, self.model_name + '_checkpoint.pt')
                 torch.save({'epoch': cur_best_epoch,
                             'best_val_loss': best_val_loss,
@@ -345,11 +371,13 @@ class LearningAlgorithm():
         val_loss = val_loss[:epoch+1]
         train_recon = train_recon[:epoch+1]
         train_kl = train_kl[:epoch+1]
+        train_qd = train_qd[:epoch+1]
         val_recon = val_recon[:epoch+1]
         val_kl = val_kl[:epoch+1]
+        val_qd = val_qd[:epoch+1]
         loss_file = os.path.join(save_dir, 'loss_model.pckl')
         with open(loss_file, 'wb') as f:
-            pickle.dump([train_loss, val_loss, train_recon, train_kl, val_recon, val_kl], f)
+            pickle.dump([train_loss, val_loss, train_recon, train_kl, train_qd, val_recon, val_kl, val_qd], f)
 
 
         # Save the loss figure
@@ -386,7 +414,15 @@ class LearningAlgorithm():
         fig_file = os.path.join(save_dir, 'loss_KLD_{}.png'.format(tag))
         plt.savefig(fig_file)
 
-
-    
+        plt.clf()
+        fig = plt.figure(figsize=(8,6))
+        plt.rcParams['font.size'] = 12
+        plt.plot(train_qd, label='Training')
+        plt.plot(val_qd, label='Validation')
+        plt.legend(fontsize=16, title='{}: Quality Driven Prediction Interval Loss'.format(self.model_name), title_fontsize=20)
+        plt.xlabel('epochs', fontdict={'size':16})
+        plt.ylabel('loss', fontdict={'size':16})
+        fig_file = os.path.join(save_dir, 'loss_QD_{}.png'.format(tag))
+        plt.savefig(fig_file)   
 
         
