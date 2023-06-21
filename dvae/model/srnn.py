@@ -205,7 +205,7 @@ class SRNN(nn.Module):
                 dic_layers['activation'+str(n)] = self.activation
                 dic_layers['dropout'+str(n)] = nn.Dropout(p=self.dropout_p)
         self.mlp_hz_x = nn.Sequential(dic_layers)    
-        self.gen_out = nn.Linear(dim_hz_x, self.y_dim)
+        #self.gen_out = nn.Linear(dim_hz_x, self.y_dim)
         self.y_mean = nn.Linear(dim_hz_x, self.y_dim)
         self.y_var = nn.Linear(dim_hz_x, self.y_dim)
 
@@ -273,12 +273,12 @@ class SRNN(nn.Module):
         # 1. z_t and h_t to y_t
         hz_x = torch.cat((h, z), -1)
         hz_x = self.mlp_hz_x(hz_x)
-        y = self.gen_out(hz_x)
+        #y = self.gen_out(hz_x)
         y_mean = self.y_mean(hz_x)
         y_var = self.y_var(hz_x)
 
-        y_lower = y_mean - y_var * 2
-        y_upper = y_mean + y_var * 2
+        y_lower = y_mean - y_var * (1.645)
+        y_upper = y_mean + y_var * (1.645)
 
         return y_mean, y_lower, y_upper
 
@@ -326,7 +326,9 @@ class SRNN(nn.Module):
         info.append('>>>> From h_t and z_t to x_t')
         for layer in self.mlp_hz_x:
             info.append(str(layer))
-        info.append(str(self.gen_out))
+        #info.append(str(self.gen_out))
+        info.append(str(self.y_mean))
+        info.append(str(self.y_var))
 
         info.append('----- Generation z -----')
         info.append('>>>> From h_t and z_tm1 to z_t')

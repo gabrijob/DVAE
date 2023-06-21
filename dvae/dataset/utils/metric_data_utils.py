@@ -58,6 +58,34 @@ def plot_n_batches_two_curves_subgraph(nb_batches, seq_len, line_len, y_orig, y_
     plt.close()
 
 
+def plot_n_batches_four_curves_subgraph(nb_batches, seq_len, line_len, y_arrs, labels, savepath=''):
+    cols = line_len
+    rows = math.floor(nb_batches / line_len)
+
+    fig, ax = plt.subplots(rows, cols, sharex='col', sharey='row', figsize=(20,10))
+
+    #seq_len = y_orig.shape[1]
+    x_arr = range(0, seq_len)
+
+    y_start = 0
+    y_end = seq_len
+    for i in range(rows):
+        for j in range(cols):
+            ax[i, j].set(xlabel='time(s)', ylim=(0,1))            
+            for k, y in enumerate(y_arrs):
+                ax[i, j].plot(x_arr, y[y_start:y_end], label=labels[k])
+
+            ax[i, j].legend(title = "Batch {}".format(i*line_len + j))
+
+            y_start = y_end
+            y_end = y_end + seq_len 
+
+    if savepath != '':
+        plt.savefig(savepath, dpi=(200))
+
+    plt.close()
+
+
 def plot_two_curves_graph(x_arr, y1_arr, y2_arr, x_label='x', y_label='y', y1_label='y1', y2_label='y2', title='x y1 y2 Graph', savepath='' ):
 
     fig = plt.figure()
@@ -69,6 +97,7 @@ def plot_two_curves_graph(x_arr, y1_arr, y2_arr, x_label='x', y_label='y', y1_la
     if savepath != '':
         plt.savefig(savepath)
     plt.close()
+
 
 def plot_n_curves(x_arr, y_arrs, labels, x_label, y_label, title, savepath=''):
     fig = plt.figure()

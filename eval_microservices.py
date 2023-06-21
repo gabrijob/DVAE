@@ -10,7 +10,7 @@ import torch
 import numpy as np
 import random
 import matplotlib.pyplot as plt
-from dvae.dataset.utils.metric_data_utils import plot_two_curves_graph, plot_n_curves, plot_n_batches_two_curves_subgraph
+from dvae.dataset.utils.metric_data_utils import plot_two_curves_graph, plot_n_curves, plot_n_batches_two_curves_subgraph, plot_n_batches_four_curves_subgraph
 from dvae.learning_algo import LearningAlgorithm
 from dvae.learning_algo_ss import LearningAlgorithm_ss
 from dvae.utils.eval_metric import compute_rmse
@@ -37,8 +37,8 @@ class Options:
         self.parser.add_argument('--cfg', type=str, default=None, help='config path')
         self.parser.add_argument('--saved_dict', type=str, default=None, help='trained model dict')
         # Dataset
-        self.parser.add_argument('--test_dir', type=str, default='/home/ggrabher/Code/the-prometheus-metrics-dataset/5-minutes-metrics/teastore/teastore-webui', help='test dataset')
-        self.parser.add_argument('--anomaly_test_dir', type=str, default='/home/ggrabher/Code/the-prometheus-metrics-dataset/5-minutes-metrics/teastore/teastore-db', help='anomaly test dataset')
+        self.parser.add_argument('--test_dir', type=str, default='/home/ggrabher/Code/the-prometheus-metrics-dataset/5-minutes-metrics/teastore/teastore-image', help='test dataset')
+        self.parser.add_argument('--anomaly_test_dir', type=str, default='/home/ggrabher/Code/the-prometheus-metrics-dataset/5-minutes-metrics/teastore-webui', help='anomaly test dataset')
         # Results directory
         self.parser.add_argument('--ret_dir', type=str, default='./data/tmp', help='tmp dir for metric reconstruction')
     def get_params(self):
@@ -137,12 +137,13 @@ def plot_comparison_graphs(original_data, generated_data, metrics, title='MASK',
                               savepath=savepath)
 
 
-def post_delta_correction(original_data, generated_data):
+def post_delta_correction(original_data, generated_data, gen_start_idx=0):
     delta_arr = original_data - generated_data
 
     avg_delta = np.mean(delta_arr, axis=1)
     
-    return generated_data + avg_delta[:, np.newaxis]
+    corrected = generated_data + avg_delta[:, np.newaxis] 
+    return np.concatenate((original_data[:,:gen_start_idx], corrected[:, gen_start_idx:]), axis=1)
 
      
 def eval_qd(dataloader, metrics, batch_size=1):
@@ -152,6 +153,8 @@ def eval_qd(dataloader, metrics, batch_size=1):
                 os.makedirs(eval_dir)
 
     list_qd = []
+    list_MPIW = []
+    list_PICP = []
     it = iter(dataloader)
     for i in range(0, batch_size):
         batch_data = next(it)
@@ -165,8 +168,10 @@ def eval_qd(dataloader, metrics, batch_size=1):
         lower_bounds = dvae.y_lower_bound.to('cpu').detach().squeeze().numpy()
         upper_bounds = dvae.y_upper_bound.to('cpu').detach().squeeze().numpy()
 
-        PIQD = loss_PIQD(batch_data, dvae.y_lower_bound, dvae.y_upper_bound, alpha=0.2).item()
-        list_qd.append(PIQD)
+        QD, MPIW, PICP = loss_PIQD(batch_data, dvae.y_lower_bound, dvae.y_upper_bound, alpha=0.2)
+        list_qd.append(QD.item())
+        list_MPIW.append(MPIW.item())
+        list_PICP.append(PICP.item())
 
         if i==0:
             orig_input = np.transpose(orig_data)
@@ -180,15 +185,22 @@ def eval_qd(dataloader, metrics, batch_size=1):
             gen_upper = np.concatenate((gen_upper, np.transpose(upper_bounds)), axis=1)
 
     np_qd = np.array(list_qd)
-    print('QDPI: {:.4f}'.format(np.mean(np_qd)))
+    print('QD: {:.4f}'.format(np.mean(np_qd)))
+    np_mpiw = np.array(list_MPIW)
+    print('MPIW: {:.4f}'.format(np.mean(np_mpiw)))
+    np_picp = np.array(list_PICP)
+    print('PICP: {:.4f}'.format(np.mean(np_picp)))
 
     tot_seqs = range(0, orig_input.shape[1])
     comp_labels = ['Ground truth', 'Generated', 'Lower bound', 'Upper bound']
     for i, metric in enumerate(metrics):
         comp_arrays = [orig_input[i,:], generated[i,:], gen_lower[i,:], gen_upper[i,:]]
         savepath = os.path.join(eval_dir, 'evaluation_BOUNDS_{}_{}.png'.format(learning_algo.model_name, metric))
-        plot_n_curves(x_arr=tot_seqs, y_arrs=comp_arrays, labels=comp_labels, 
-                    x_label='s (seconds)', y_label='y', title= 'Lower & Upper bound', savepath=savepath)
+        #plot_n_curves(x_arr=tot_seqs, y_arrs=comp_arrays, labels=comp_labels, 
+        #            x_label='s (seconds)', y_label='y', title= 'Lower & Upper bound', savepath=savepath)
+        
+        plot_n_batches_four_curves_subgraph(nb_batches=batch_size, seq_len=seq_len, line_len=5, 
+                                y_arrs=comp_arrays, labels=comp_labels, savepath=savepath)
 
   
 def eval_simple(dataloader):
@@ -463,7 +475,6 @@ def eval_generation_masked_filling_window(dataloader, metrics, batch_size=1, mas
                 for idx in masked_metrics_idxs:
                     partial_mask_data[-1, :, idx] = batch_data[t_to_predict, :, idx]
 
-
         if mask_comp:
             orig_data = only_mask_data.to('cpu').detach().squeeze().numpy()
         else:
@@ -471,19 +482,23 @@ def eval_generation_masked_filling_window(dataloader, metrics, batch_size=1, mas
         data_recon = full_mask_data.to('cpu').detach().squeeze().numpy()
         intern_data_recon = partial_mask_data.to('cpu').detach().squeeze().numpy()
 
-        if i==0:
-            orig_input = np.transpose(orig_data)
-            generated_mask_full = np.transpose(data_recon)
-            generated_mask_partial = np.transpose(intern_data_recon)
-        else:
-            orig_input = np.concatenate((orig_input, np.transpose(orig_data)), axis=1)
-            generated_mask_full = np.concatenate((generated_mask_full, np.transpose(data_recon)), axis=1)
-            generated_mask_partial = np.concatenate((generated_mask_partial, np.transpose(intern_data_recon)), axis=1)
+        orig_input_i = np.transpose(orig_data)
+        generated_mask_full_i = np.transpose(data_recon)
+        generated_mask_partial_i = np.transpose(intern_data_recon)
+        
+        # Apply post processing corrections if needed
+        if post_correc:
+            generated_mask_full_i = post_delta_correction(orig_input_i, generated_mask_full_i, gen_start_idx=window_size)
+            generated_mask_partial_i = post_delta_correction(orig_input_i, generated_mask_partial_i, gen_start_idx=window_size)
 
-    # Apply post processing corrections if needed
-    if post_correc:
-        generated_mask_full = post_delta_correction(orig_input, generated_mask_full)
-        generated_mask_partial = post_delta_correction(orig_input, generated_mask_partial)
+        if i==0:
+            orig_input = orig_input_i
+            generated_mask_full = generated_mask_full_i
+            generated_mask_partial = generated_mask_partial_i
+        else:
+            orig_input = np.concatenate((orig_input, orig_input_i), axis=1)
+            generated_mask_full = np.concatenate((generated_mask_full, generated_mask_full_i), axis=1)
+            generated_mask_partial = np.concatenate((generated_mask_partial, generated_mask_partial_i), axis=1)
 
     # Plot comparison graphs
     seq_len = int(orig_input.shape[1]/batch_size)
@@ -526,19 +541,23 @@ def eval_generation_masked_sliding_window(dataloader, metrics, batch_size=1, seq
         data_recon = full_predicted_data.to('cpu').detach().squeeze().numpy()
         intern_data_recon = partial_predicted_data.to('cpu').detach().squeeze().numpy()
 
-        if i==0:
-            orig_input = np.transpose(orig_data)
-            generated_mask_full = np.transpose(data_recon)
-            generated_mask_partial = np.transpose(intern_data_recon)
-        else:
-            orig_input = np.concatenate((orig_input, np.transpose(orig_data)), axis=1)
-            generated_mask_full = np.concatenate((generated_mask_full, np.transpose(data_recon)), axis=1)
-            generated_mask_partial = np.concatenate((generated_mask_partial, np.transpose(intern_data_recon)), axis=1)
+        orig_input_i = np.transpose(orig_data)
+        generated_mask_full_i = np.transpose(data_recon)
+        generated_mask_partial_i = np.transpose(intern_data_recon)
+        
+        # Apply post processing corrections if needed
+        if post_correc:
+            generated_mask_full_i = post_delta_correction(orig_input_i, generated_mask_full_i, gen_start_idx=window_size)
+            generated_mask_partial_i = post_delta_correction(orig_input_i, generated_mask_partial_i, gen_start_idx=window_size)
 
-    # Apply post processing corrections if needed
-    if post_correc:
-        generated_mask_full = post_delta_correction(orig_input, generated_mask_full)
-        generated_mask_partial = post_delta_correction(orig_input, generated_mask_partial)
+        if i==0:
+            orig_input = orig_input_i
+            generated_mask_full = generated_mask_full_i
+            generated_mask_partial = generated_mask_partial_i
+        else:
+            orig_input = np.concatenate((orig_input, orig_input_i), axis=1)
+            generated_mask_full = np.concatenate((generated_mask_full, generated_mask_full_i), axis=1)
+            generated_mask_partial = np.concatenate((generated_mask_partial, generated_mask_partial_i), axis=1)
 
     # Plot comparison graphs of regenerated inputs
     plot_comparison_graphs(orig_input, generated_mask_full, metrics, 'MASK_FULL', mask_t=seq_len-window_size, batch_size=batch_size, seq_len=seq_len)
@@ -562,13 +581,15 @@ if __name__ == '__main__':
     print('Total params: %.2fM' % (sum(p.numel() for p in dvae.parameters()) / 1000000.0))
 
 
-    test_dataset = OfflinePrometheusMetrics(svc_datadir=params['test_dir'], shuffle=False, seq_len=300, split=1, dist_policy='function', removed_idx=[])
+    test_dataset = OfflinePrometheusMetrics(svc_datadir=params['test_dir'], 
+                        shuffle=False, seq_len=300, split=1, 
+                        dist_policy='function', removed_idx=[])
     test_num = test_dataset.__len__()
     seq_len = test_dataset.__seq_len__()
     metrics = test_dataset.__metric_names__()
     print('Test samples: {}'.format(test_num))
     test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2)
-    eval_qd(dataloader=test_dataloader, metrics=metrics, batch_size=10)
+    eval_qd(dataloader=test_dataloader, metrics=metrics, batch_size=20)
 
     #eval_generation_masked_filling_window(dataloader=test_dataloader, metrics=metrics, batch_size=30, mask_t=10, masked_metrics_idxs=[3], mask_comp=False)
     eval_generation_masked_sliding_window(dataloader=test_dataloader, metrics=metrics, batch_size=20, seq_len=seq_len, window_size=30, masked_metrics_idxs=[3], post_correc=False, mask_comp=False)

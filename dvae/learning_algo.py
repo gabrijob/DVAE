@@ -160,8 +160,8 @@ class LearningAlgorithm():
         early_stop_patience = self.cfg.getint('Training', 'early_stop_patience')
         save_frequency = self.cfg.getint('Training', 'save_frequency')
         beta = self.cfg.getfloat('Training', 'beta')
-        gamma = 1
-        alpha = 0.05
+        gamma = 0.1
+        alpha = 0.1
         kl_warm = 0
         qd_warm = 0
 
@@ -241,6 +241,7 @@ class LearningAlgorithm():
                     recon_batch_data = self.model(batch_data)
                     loss_fn = torch.nn.MSELoss(reduction='sum')
                     loss_recon = loss_fn(batch_data, recon_batch_data)
+                    #loss_recon, _, _ = loss_PIQD(batch_data, self.model.y_lower_bound, self.model.y_upper_bound, alpha=alpha)
 
                 seq_len, bs, _ = self.model.z_mean.shape
                 loss_recon = loss_recon / (seq_len * bs)
@@ -254,7 +255,7 @@ class LearningAlgorithm():
                 loss_kl = kl_warm * beta * loss_kl / (seq_len * bs)
 
                 # Quality-Drive Prediction Interval Loss
-                loss_qd = loss_PIQD(batch_data, self.model.y_lower_bound, self.model.y_upper_bound, alpha=alpha)
+                loss_qd, _, _ = loss_PIQD(batch_data, self.model.y_lower_bound, self.model.y_upper_bound, alpha=alpha)
                 loss_qd = loss_qd * gamma * qd_warm
 
                 loss_tot = loss_recon + loss_kl + loss_qd
@@ -288,6 +289,8 @@ class LearningAlgorithm():
                     recon_batch_data = self.model(batch_data)
                     loss_fn = torch.nn.MSELoss(reduction='sum')
                     loss_recon = loss_fn(batch_data, recon_batch_data)
+                    #loss_recon, _, _ = loss_PIQD(batch_data, self.model.y_lower_bound, self.model.y_upper_bound, alpha=alpha)
+
                 seq_len, bs, _ = self.model.z_mean.shape
                 loss_recon = loss_recon / (seq_len * bs)
                 
@@ -300,7 +303,7 @@ class LearningAlgorithm():
                 loss_kl = kl_warm * beta * loss_kl / (seq_len * bs)
 
                 # Quality-Drive Prediction Interval Loss
-                loss_qd = loss_PIQD(batch_data, self.model.y_lower_bound, self.model.y_upper_bound, alpha=alpha)
+                loss_qd, _, _ = loss_PIQD(batch_data, self.model.y_lower_bound, self.model.y_upper_bound, alpha=alpha)
                 loss_qd = loss_qd * gamma * qd_warm
 
                 loss_tot = loss_recon + loss_kl + loss_qd
@@ -321,7 +324,7 @@ class LearningAlgorithm():
             val_qd[epoch] = val_qd[epoch] / val_num
             
             # Early stop patiance
-            if val_loss[epoch] < best_val_loss or kl_warm <1 or qd_warm <1:
+            if val_loss[epoch] < best_val_loss or kl_warm <1:
                 best_val_loss = val_loss[epoch]
                 cpt_patience = 0
                 best_state_dict = self.model.state_dict()
@@ -335,9 +338,11 @@ class LearningAlgorithm():
             interval = (end_time - start_time).seconds / 60
             logger.info('Epoch: {} training time {:.2f}m'.format(epoch, interval))
             logger.info('Train => tot: {:.2f} recon {:.2f} KL {:.2f} QD {:.2f} Val => tot: {:.2f} recon {:.2f} KL {:.2f} QD {:.2f}'.format(train_loss[epoch], train_recon[epoch], train_kl[epoch], train_qd[epoch], val_loss[epoch], val_recon[epoch], val_kl[epoch], val_qd[epoch]))
+            #logger.info('Train => tot: {:.2f} recon {:.2f} KL {:.2f} Val => tot: {:.2f} recon {:.2f} KL {:.2f}'.format(train_loss[epoch], train_recon[epoch], train_kl[epoch], val_loss[epoch], val_recon[epoch], val_kl[epoch]))
+
 
             # Stop traning if early-stop triggers
-            if cpt_patience == early_stop_patience and kl_warm >= 1.0 and qd_warm >= 1.0:
+            if cpt_patience == early_stop_patience and kl_warm >= 1.0:
                 logger.info('Early stop patience achieved')
                 break
 
@@ -378,7 +383,7 @@ class LearningAlgorithm():
         loss_file = os.path.join(save_dir, 'loss_model.pckl')
         with open(loss_file, 'wb') as f:
             pickle.dump([train_loss, val_loss, train_recon, train_kl, train_qd, val_recon, val_kl, val_qd], f)
-
+            #pickle.dump([train_loss, val_loss, train_recon, train_kl, val_recon, val_kl], f)
 
         # Save the loss figure
         plt.clf()
@@ -414,6 +419,7 @@ class LearningAlgorithm():
         fig_file = os.path.join(save_dir, 'loss_KLD_{}.png'.format(tag))
         plt.savefig(fig_file)
 
+        
         plt.clf()
         fig = plt.figure(figsize=(8,6))
         plt.rcParams['font.size'] = 12
@@ -424,5 +430,5 @@ class LearningAlgorithm():
         plt.ylabel('loss', fontdict={'size':16})
         fig_file = os.path.join(save_dir, 'loss_QD_{}.png'.format(tag))
         plt.savefig(fig_file)   
-
+        
         
