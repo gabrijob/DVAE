@@ -37,7 +37,7 @@ def loss_MSE(x, y):
     ret = torch.mean((x-y)**2)
     return ret
 
-def loss_PIQD(y_true, y_lower, y_upper, alpha, soft_factor=150, lagrangian=0.2):
+def loss_PIQD(y_true, y_lower, y_upper, alpha, soft_factor=150, lagrangian=0.05):
     seq_len, batch_size, _ = y_true.shape
 
     k_hu = torch.max(torch.zeros(y_true.shape), torch.sign(y_upper - y_true))

@@ -11,6 +11,7 @@ import sys
 import argparse
 from dvae.learning_algo import LearningAlgorithm
 from dvae.learning_algo_ss import LearningAlgorithm_ss
+from dvae.learning_algo_ensemble import LearningAlgorithm_ensemble
 
 class Options:
     def __init__(self):
@@ -27,6 +28,8 @@ class Options:
         # Resume training
         self.parser.add_argument('--reload', action='store_true', help='resume the training')
         self.parser.add_argument('--model_dir', type=str, default=None, help='model directory')
+        # Ensemble training
+        self.parser.add_argument('--ensemble', action='store_true', help='ensemble training')
 
     def get_params(self):
         self._initial()
@@ -37,11 +40,14 @@ class Options:
 if __name__ == '__main__':
 
     params = Options().get_params()
-    if not params['ss']:
-        learning_algo = LearningAlgorithm(params=params)
+    if params['ensemble']:
+        learning_algo = LearningAlgorithm_ensemble(params=params)
+        learning_algo.train_ensemble()
+    elif params['ss']:
+        learning_algo = LearningAlgorithm_ss(params=params)
         learning_algo.train()
     else:
-        learning_algo = LearningAlgorithm_ss(params=params)
+        learning_algo = LearningAlgorithm(params=params)
         learning_algo.train()
 
 
