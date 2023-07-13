@@ -42,7 +42,7 @@ if __name__ == '__main__':
     params = Options().get_params()
     if params['ensemble']:
         learning_algo = LearningAlgorithm_ensemble(params=params)
-        learning_algo.train_ensemble()
+        learning_algo.train()
     elif params['ss']:
         learning_algo = LearningAlgorithm_ss(params=params)
         learning_algo.train()

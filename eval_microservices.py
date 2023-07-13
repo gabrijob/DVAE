@@ -37,7 +37,7 @@ class Options:
         self.parser.add_argument('--cfg', type=str, default=None, help='config path')
         self.parser.add_argument('--saved_dict', type=str, default=None, help='trained model dict')
         # Dataset
-        self.parser.add_argument('--test_dir', type=str, default='/home/ggrabher/Code/the-prometheus-metrics-dataset/5-minutes-metrics/teastore/teastore-image', help='test dataset')
+        self.parser.add_argument('--test_dir', type=str, default='/home/ggrabher/Code/the-prometheus-metrics-dataset/5-minutes-metrics/teastore/teastore-webui/node_dist_1/hw_spec_2/pod_spec_1/teastore_browse/', help='test dataset')
         self.parser.add_argument('--anomaly_test_dir', type=str, default='/home/ggrabher/Code/the-prometheus-metrics-dataset/5-minutes-metrics/teastore-webui', help='anomaly test dataset')
         # Results directory
         self.parser.add_argument('--ret_dir', type=str, default='./data/tmp', help='tmp dir for metric reconstruction')
@@ -155,6 +155,7 @@ def eval_qd(dataloader, metrics, batch_size=1):
     list_qd = []
     list_MPIW = []
     list_PICP = []
+    list_rmse = []
     it = iter(dataloader)
     for i in range(0, batch_size):
         batch_data = next(it)
@@ -173,6 +174,10 @@ def eval_qd(dataloader, metrics, batch_size=1):
         list_MPIW.append(MPIW.item())
         list_PICP.append(PICP.item())
 
+        # Root mean square error evaluation
+        RMSE = np.sqrt(np.square(orig_data - data_recon).mean())
+        list_rmse.append(RMSE)
+
         if i==0:
             orig_input = np.transpose(orig_data)
             generated = np.transpose(data_recon)
@@ -190,17 +195,19 @@ def eval_qd(dataloader, metrics, batch_size=1):
     print('MPIW: {:.4f}'.format(np.mean(np_mpiw)))
     np_picp = np.array(list_PICP)
     print('PICP: {:.4f}'.format(np.mean(np_picp)))
+    np_rmse = np.array(list_rmse)
+    print('RMSE: {:.4f}'.format(np.mean(np_rmse)))
 
     tot_seqs = range(0, orig_input.shape[1])
     comp_labels = ['Ground truth', 'Generated', 'Lower bound', 'Upper bound']
-    for i, metric in enumerate(metrics):
-        comp_arrays = [orig_input[i,:], generated[i,:], gen_lower[i,:], gen_upper[i,:]]
-        savepath = os.path.join(eval_dir, 'evaluation_BOUNDS_{}_{}.png'.format(learning_algo.model_name, metric))
+    #for i, metric in enumerate(metrics):
+    #    comp_arrays = [orig_input[i,:], generated[i,:], gen_lower[i,:], gen_upper[i,:]]
+    #    savepath = os.path.join(eval_dir, 'evaluation_BOUNDS_{}_{}.png'.format(learning_algo.model_name, metric))
         #plot_n_curves(x_arr=tot_seqs, y_arrs=comp_arrays, labels=comp_labels, 
         #            x_label='s (seconds)', y_label='y', title= 'Lower & Upper bound', savepath=savepath)
         
-        plot_n_batches_four_curves_subgraph(nb_batches=batch_size, seq_len=seq_len, line_len=5, 
-                                y_arrs=comp_arrays, labels=comp_labels, savepath=savepath)
+    #    plot_n_batches_four_curves_subgraph(nb_batches=batch_size, seq_len=seq_len, line_len=5, 
+    #                            y_arrs=comp_arrays, labels=comp_labels, savepath=savepath)
 
   
 def eval_simple(dataloader):
@@ -230,7 +237,7 @@ def eval_simple(dataloader):
         KLD = loss_kl / seq_len
 
         #AED = np.sqrt(np.square(orig_data - data_recon))
-        AED = np.linalg.norm(orig_data-data_recon)
+        AED = np.linalg.norm(orig_data-data_recon) # Euclidian Distance
 
         list_rmse.append(RMSE)
         list_kld.append(KLD)
@@ -488,8 +495,8 @@ def eval_generation_masked_filling_window(dataloader, metrics, batch_size=1, mas
         
         # Apply post processing corrections if needed
         if post_correc:
-            generated_mask_full_i = post_delta_correction(orig_input_i, generated_mask_full_i, gen_start_idx=window_size)
-            generated_mask_partial_i = post_delta_correction(orig_input_i, generated_mask_partial_i, gen_start_idx=window_size)
+            generated_mask_full_i = post_delta_correction(orig_input_i, generated_mask_full_i, gen_start_idx=seq_len)
+            generated_mask_partial_i = post_delta_correction(orig_input_i, generated_mask_partial_i, gen_start_idx=seq_len)
 
         if i==0:
             orig_input = orig_input_i
@@ -589,7 +596,7 @@ if __name__ == '__main__':
     metrics = test_dataset.__metric_names__()
     print('Test samples: {}'.format(test_num))
     test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2)
-    eval_qd(dataloader=test_dataloader, metrics=metrics, batch_size=20)
+    eval_qd(dataloader=test_dataloader, metrics=metrics, batch_size=10)
 
     #eval_generation_masked_filling_window(dataloader=test_dataloader, metrics=metrics, batch_size=30, mask_t=10, masked_metrics_idxs=[3], mask_comp=False)
-    eval_generation_masked_sliding_window(dataloader=test_dataloader, metrics=metrics, batch_size=20, seq_len=seq_len, window_size=30, masked_metrics_idxs=[3], post_correc=False, mask_comp=False)
+    #eval_generation_masked_sliding_window(dataloader=test_dataloader, metrics=metrics, batch_size=10, seq_len=seq_len, window_size=30, masked_metrics_idxs=[3], post_correc=False, mask_comp=False)

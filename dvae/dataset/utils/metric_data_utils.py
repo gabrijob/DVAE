@@ -58,27 +58,40 @@ def plot_n_batches_two_curves_subgraph(nb_batches, seq_len, line_len, y_orig, y_
     plt.close()
 
 
-def plot_n_batches_four_curves_subgraph(nb_batches, seq_len, line_len, y_arrs, labels, savepath=''):
+def plot_n_batches_four_curves_subgraph(nb_batches, seq_len, line_len, y_arrs, labels, savepath='', title='Graph', sub_titles=[]):
     cols = line_len
-    rows = math.floor(nb_batches / line_len)
+    #rows = math.floor(nb_batches / line_len)
+    rows = 1
 
-    fig, ax = plt.subplots(rows, cols, sharex='col', sharey='row', figsize=(20,10))
+    fig, ax = plt.subplots(rows, cols, sharex='col', sharey='row', figsize=(25,5))
 
     #seq_len = y_orig.shape[1]
     x_arr = range(0, seq_len)
 
     y_start = 0
-    y_end = seq_len
-    for i in range(rows):
-        for j in range(cols):
-            ax[i, j].set(xlabel='time(s)', ylim=(0,1))            
-            for k, y in enumerate(y_arrs):
-                ax[i, j].plot(x_arr, y[y_start:y_end], label=labels[k])
+    #y_end = seq_len
+    #for i in range(rows):
+    #    for j in range(cols):
+    #        ax[i, j].set(xlabel='time(s)', ylim=(0,1))            
+    #        for k, y in enumerate(y_arrs):
+    #            ax[i, j].plot(x_arr, y[y_start:y_end], label=labels[k])
 
-            ax[i, j].legend(title = "Batch {}".format(i*line_len + j))
+    #        ax[i, j].legend(title = "Batch {}".format(i*line_len + j))
 
-            y_start = y_end
-            y_end = y_end + seq_len 
+    #        y_start = y_end
+    #        y_end = y_end + seq_len 
+    
+    y_end = y_start + seq_len 
+    for i in range(cols):
+        ax[i].set(xlabel='time(s)', ylim=(0,1))            
+        for k, y in enumerate(y_arrs):
+            ax[i].plot(x_arr, y[i,y_start:y_end], label=labels[k])
+
+        ax[i].legend(title = sub_titles[i])
+
+        
+
+    fig.suptitle(title)
 
     if savepath != '':
         plt.savefig(savepath, dpi=(200))

@@ -11,7 +11,7 @@ import torch
 import matplotlib.pyplot as plt
 from .utils import myconf, get_logger, loss_KLD, loss_PIQD
 from .dataset import ensemble_dataset
-from .model import build_SRNN
+from .model import build_SRNN, build_cSRNN
 
 
 class LearningAlgorithm_ensemble():
@@ -44,8 +44,10 @@ class LearningAlgorithm_ensemble():
 
 
     def build_model(self):
-        if self.model_name == 'SRNN': # only support SRNN for the moment
+        if self.model_name == 'SRNN':
             self.curr_model = build_SRNN(cfg=self.cfg, device=self.device)
+        elif self.model_name == 'cSRNN':
+            self.curr_model = build_cSRNN(cfg=self.cfg, device=self.device)
         else:
             print('Error: wrong curr_model type')
         
@@ -207,8 +209,11 @@ class LearningAlgorithm_ensemble():
                     # (batch_size, seq_len, x_dim) -> (seq_len, batch_size, x_dim)
                     batch_data = batch_data.permute(1, 0, 2)
                     recon_batch_data = self.curr_model(batch_data)
+                    # Get only x input from batch data
+                    xcut_batch_data = batch_data[:, :, :self.curr_model.x_dim]
+                    
                     loss_fn = torch.nn.MSELoss(reduction='sum')
-                    loss_recon = loss_fn(batch_data, recon_batch_data)
+                    loss_recon = loss_fn(xcut_batch_data, recon_batch_data)
                 else:
                     logger.error('Unknown datset')
 
@@ -220,7 +225,7 @@ class LearningAlgorithm_ensemble():
                 loss_kl = kl_warm * beta * loss_kl / (seq_len * bs)
 
                 # Quality-Driven Prediction Interval Loss
-                loss_qd, _, _ = loss_PIQD(batch_data, self.curr_model.y_lower_bound, self.curr_model.y_upper_bound, alpha=alpha)
+                loss_qd, _, _ = loss_PIQD(xcut_batch_data, self.curr_model.y_lower_bound, self.curr_model.y_upper_bound, alpha=alpha)
                 loss_qd = loss_qd * gamma * qd_warm
 
                 loss_tot = loss_recon + loss_kl + loss_qd
@@ -242,8 +247,11 @@ class LearningAlgorithm_ensemble():
                     # (batch_size, seq_len, x_dim) -> (seq_len, batch_size, x_dim)
                     batch_data = batch_data.permute(1, 0, 2)
                     recon_batch_data = self.curr_model(batch_data)
+                    # Get only x input from batch data
+                    xcut_batch_data = batch_data[:, :, :self.curr_model.x_dim]
+
                     loss_fn = torch.nn.MSELoss(reduction='sum')
-                    loss_recon = loss_fn(batch_data, recon_batch_data)
+                    loss_recon = loss_fn(xcut_batch_data, recon_batch_data)
                 else:
                     logger.error('Unknown datset')
 
@@ -255,7 +263,7 @@ class LearningAlgorithm_ensemble():
                 loss_kl = kl_warm * beta * loss_kl / (seq_len * bs)
 
                 # Quality-Driven Prediction Interval Loss
-                loss_qd, _, _ = loss_PIQD(batch_data, self.curr_model.y_lower_bound, self.curr_model.y_upper_bound, alpha=alpha)
+                loss_qd, _, _ = loss_PIQD(xcut_batch_data, self.curr_model.y_lower_bound, self.curr_model.y_upper_bound, alpha=alpha)
                 loss_qd = loss_qd * gamma * qd_warm
 
                 loss_tot = loss_recon + loss_kl + loss_qd
@@ -349,6 +357,7 @@ class LearningAlgorithm_ensemble():
         plt.ylabel('loss', fontdict={'size':16})
         fig_file = os.path.join(save_dir, 'loss_{}.png'.format(tag))
         plt.savefig(fig_file)
+        plt.close()
 
         plt.clf()
         fig = plt.figure(figsize=(8,6))
@@ -360,6 +369,8 @@ class LearningAlgorithm_ensemble():
         plt.ylabel('loss', fontdict={'size':16})
         fig_file = os.path.join(save_dir, 'loss_recon_{}.png'.format(tag))
         plt.savefig(fig_file) 
+        plt.close()
+
 
         plt.clf()
         fig = plt.figure(figsize=(8,6))
@@ -371,6 +382,7 @@ class LearningAlgorithm_ensemble():
         plt.ylabel('loss', fontdict={'size':16})
         fig_file = os.path.join(save_dir, 'loss_KLD_{}.png'.format(tag))
         plt.savefig(fig_file)
+        plt.close()
 
         
         plt.clf()
@@ -382,9 +394,10 @@ class LearningAlgorithm_ensemble():
         plt.xlabel('epochs', fontdict={'size':16})
         plt.ylabel('loss', fontdict={'size':16})
         fig_file = os.path.join(save_dir, 'loss_QD_{}.png'.format(tag))
-        plt.savefig(fig_file)   
-        
-        
+        plt.savefig(fig_file)
+        plt.close()
+   
+                
     def train_ensemble(self):
         
         data_dir = self.cfg.get('User', 'data_dir')
@@ -394,3 +407,6 @@ class LearningAlgorithm_ensemble():
         for f in functions:        
             print("Training curr_model for the " + f + " function.")
             self.train_model(f)
+
+    def train(self):
+        self.train_ensemble()

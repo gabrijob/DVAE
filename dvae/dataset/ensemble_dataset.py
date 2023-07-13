@@ -92,15 +92,19 @@ class EnsembleMetrics(Dataset):
 
 
     def read_data(self, root_dir, removed_dirs, train_p=0, test_p=0, val_p=0):
-        interesting_metrics = [
+        input_metrics = [
             "container_cpu_usage_seconds_total",
             "container_fs_writes_bytes_total",
             "container_memory_usage_bytes", 
-            "container_network_receive_packets_total", 
             "container_network_transmit_packets_total"]
+        control_metrics = [
+            "container_network_receive_packets_total"
+        ]
+        self.ctrl_idxs = range(len(input_metrics), len(input_metrics) + len(control_metrics))
 
         # Start reading files
-        metric_pool = {} # {'metric_1':[...], 'metric_2':[...], ..., 'metric_n':[...]}
+        input_metric_pool = {} # {'metric_1':[...], 'metric_2':[...], ..., 'metric_n':[...]}
+        control_metric_pool = {}
         files = []
         for dirpath, dirnames, filenames in os.walk(root_dir):
             #if dirnames in functions:
@@ -117,21 +121,37 @@ class EnsembleMetrics(Dataset):
             data = json.load(f)
             results = data['data']['result']
             
-            # Insert time-series into metric_pool
+            # Insert time-series into metric_pools
             metric = os.path.basename(fname).split('.')[0]
             truncate_at = (len(results[0]['values']) // self.seq_len) * self.seq_len
-            if metric in interesting_metrics:
+            # Input metrics
+            if metric in input_metrics:
                 # Check if we already have data of another experiment for this metric in the metric pool
-                if metric in metric_pool:
-                    values = metric_pool[metric]
+                if metric in input_metric_pool:
+                    values = input_metric_pool[metric]
                     # appending metrics of different experiments must be done carefuly as to avoid having the overlap of sequences
                     # for example, a sequence containing the end of an experiment and the beginning of another 
                     values.extend(results[0]['values'][:truncate_at]) 
-                    metric_pool[metric] = values
+                    input_metric_pool[metric] = values
                 else:
-                    metric_pool[metric] = results[0]['values'][:truncate_at]
+                    input_metric_pool[metric] = results[0]['values'][:truncate_at]
+            # Control metrics
+            elif metric in control_metrics:
+                if metric in control_metric_pool:
+                    values = control_metric_pool[metric]
+                    values.extend(results[0]['values'][:truncate_at]) 
+                    control_metric_pool[metric] = values
+                else:
+                    control_metric_pool[metric] = results[0]['values'][:truncate_at]
 
 
+        # Order metric pool by metric name
+        input_metric_pool = dict(sorted(input_metric_pool.items()))
+        control_metric_pool = dict(sorted(control_metric_pool.items()))
+        
+        # Join into one metric pool (assert that control metrics are at the end of pool)
+        metric_pool = input_metric_pool | control_metric_pool
+        
         # Assert that every metric has the same number of samples
         t_per_metric = [len(metric_pool[metric]) for metric in metric_pool.keys()]
         if sum(t_per_metric) != (len(t_per_metric) * t_per_metric[0]):
@@ -142,8 +162,6 @@ class EnsembleMetrics(Dataset):
 
 
     def preprocess_data(self, metric_pool, t_per_metric, train_p=0, test_p=0, val_p=0):
-        # Order metric pool by metric name
-        metric_pool = dict(sorted(metric_pool.items()))
         self.metric_names = metric_pool.keys()
 
         # Compute sequence grouping
@@ -212,6 +230,9 @@ class EnsembleMetrics(Dataset):
 
     def __metric_names__(self):
         return list(self.metric_names)
+
+    def __ctrl_idxs__(self):
+        return self.ctrl_idxs
 
     def __seq_len__(self):
         return self.seq_len
